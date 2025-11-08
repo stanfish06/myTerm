@@ -40,6 +40,8 @@ void screen_greet() {
 // TODO you will need to swap fg bg color for the character covered by the cursor
 // cursor position needs to be pixel position
 // curosr position has to be stored
+// to prevent cursor from blocking the text, you need to know what text is under the cursor and invert the color of those text so that it will be visible. Once cursor leave the text, invert the text back
+// try array of strings to store lines
 void screen_draw_block_cursor(int row, int col) {
 	int x = col * screen.char_width;
 	int y = row * screen.char_height;
