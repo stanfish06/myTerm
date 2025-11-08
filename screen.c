@@ -1,3 +1,4 @@
+#include <math.h>
 #include "screen.h" 
 #include "string.h"
 #include <X11/Xlib.h>
@@ -32,10 +33,30 @@ void screen_draw_text(const char* text, int row, int col) {
 	XDrawString(screen.display, screen.window, screen.gc, x, y, text, strlen(text));
 }
 
+void screen_greet() {
+	screen_draw_text("Hello world!", 0, 1);
+}
+
 // TODO you will need to swap fg bg color for the character covered by the cursor
 // cursor position needs to be pixel position
 // curosr position has to be stored
 void screen_draw_block_cursor(int row, int col) {
+	int x = col * screen.char_width;
+	int y = row * screen.char_height;
 	XSetForeground(screen.display, screen.gc, 0x00FFFFFF);
-	XFillRectangle(screen.display, screen.window, screen.gc, 0, 0, screen.char_width, screen.char_height);	
+	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
+}
+// cursor moves only left or right
+void move_cursor(TextCursor *cursor, int num_cols_shift, int direction) {
+	// first remove previous cursor
+	int x = cursor->col * screen.char_width;
+	int y = cursor->row * screen.char_height;
+	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
+	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
+	if (direction == 1) {
+		cursor->col = fmin(cursor->col + num_cols_shift, 800 / screen.char_width);
+	} else if (direction == -1) {
+		cursor->col = fmax(cursor->col - num_cols_shift, 0);
+	}
+	screen_draw_block_cursor(cursor->row, cursor->col);
 }
