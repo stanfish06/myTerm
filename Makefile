@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -O2
-LDLIBS = -lX11
+LDLIBS = -lX11 -lm
 
 SRC = main.c screen.c
 OBJ = $(SRC:.c=.o)

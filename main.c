@@ -78,15 +78,33 @@ void create_window()
 int main()
 {
 	create_window();
-	XSelectInput(main_display, main_window, ExposureMask);
+	XSelectInput(main_display, main_window, ExposureMask | KeyPressMask);
+	TextCursor cursor;
+	cursor.row     = 0;
+	cursor.col     = 0;
+	cursor.visible = 1;
 	for (;;) {
 		XEvent e;
 		XNextEvent(main_display, &e);
-		
-		if (e.type == Expose) {
-			screen_draw_text("hello world", 0, 1);
-			screen_draw_block_cursor(5, 5);
-			XFlush(main_display);
+		screen_greet();
+		screen_draw_block_cursor(cursor.row, cursor.col);
+		if (e.type == KeyPress) {
+			char buf[1] = {0};
+			KeySym keysym;
+			XLookupString(&e.xkey, buf, 1, &keysym, NULL);
+			screen_draw_text("key pressed!", 1, 1);
+			printf("key %s pressed\n", buf);
+			// move cursor
+			switch(keysym) {
+				case XK_Left:
+					move_cursor(&cursor, 1, -1);
+					break;
+				case XK_Right:
+					move_cursor(&cursor, 1, 1);
+					break;
+			}
 		}
+		printf("cursor x: %d", cursor.col);
+		XFlush(main_display);
 	}
 }
