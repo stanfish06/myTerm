@@ -1,6 +1,7 @@
 #include <math.h>
 #include "screen.h" 
 #include "string.h"
+#include <stdlib.h>
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 
@@ -18,6 +19,14 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
 	screen.cursor.row = 0;
 	screen.cursor.col = 0;
 	screen.cursor.visible = 1;
+
+    screen.nrows = 600 / screen.char_height;
+    screen.ncols = 800 / screen.char_width;
+
+    screen.buf_text = malloc(screen.nrows * sizeof(text_t*));
+    for (int i = 0; i < screen.nrows; ++i) {
+        screen.buf_text[i] = calloc(screen.ncols, sizeof(text_t));
+    }    
 }
 
 void screen_clear() {

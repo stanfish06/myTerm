@@ -3,6 +3,9 @@
 
 #include <X11/Xlib.h>
 
+// type for text
+typedef unsigned char text_t;
+
 typedef struct {
 	int row;
 	int col;
@@ -17,6 +20,9 @@ typedef struct {
 	int char_width;
 	int char_height;
 	TextCursor cursor;
+    text_t **buf_text;
+    int nrows;
+    int ncols;
 } TermScreen;
 
 void screen_init(Display* display, Window window, GC gc, XFontStruct* font);
