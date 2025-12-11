@@ -83,10 +83,15 @@ int main()
 	cursor.row     = 0;
 	cursor.col     = 0;
 	cursor.visible = 1;
+    int greeted = 0;
 	for (;;) {
 		XEvent e;
 		XNextEvent(main_display, &e);
-		screen_greet();
+        if (!greeted) {
+            screen_greet();
+            greeted = 1;
+        }
+        screen_draw_all_text();
 		screen_draw_block_cursor(cursor.row, cursor.col);
 		if (e.type == KeyPress) {
 			char buf[1] = {0};
