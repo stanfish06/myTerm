@@ -29,9 +29,56 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
     }    
 }
 
+void screen_put_char(text_t c, int row, int col) {
+    int _row = fmin(row, screen.nrows - 1);
+    int _col = fmin(col, screen.ncols - 1);
+    screen.buf_text[_row][_col] = c;   
+}
+
+text_t screen_get_char(int row, int col) {
+    int _row = fmin(row, screen.nrows - 1);
+    int _col = fmin(col, screen.ncols - 1);
+    return screen.buf_text[_row][_col];
+}
+
 void screen_clear() {
 	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
 	XFillRectangle(screen.display, screen.window, screen.gc, 0, 0, 800, 600);
+}
+
+void screen_put_text(const char* text, int row, int col) {
+    if (row < screen.nrows) {
+        int text_len = strlen(text);
+        for (int i = 0; i < text_len; ++i) {
+            int _col = col + i;
+            if (_col < screen.ncols) {
+                screen_put_char(text[i], row, _col);
+            }
+        }
+    }
+}
+
+void screen_draw_block_text(int row, int col, int nrows, int ncols) {
+    for (int i = 0; i < nrows; ++i) {
+        int _row = row + i;
+        text_t *text = calloc(ncols, sizeof(text_t));
+        for (int j = 0; j < ncols; ++j) {
+            int _col = col + j;
+            if (_row < screen.nrows && _col < screen.ncols) {
+                text[j] = screen.buf_text[_row][_col]; 
+            }
+        }
+        int x = col * screen.char_width;
+        int y = _row * screen.char_height + screen.font->ascent;
+        XSetForeground(screen.display, screen.gc, 0x00FFFFFF);
+        XDrawString(screen.display, screen.window, screen.gc, x, y, text, ncols);
+        free(text);
+    }
+}
+
+// handy function to redraw full screen, for test only
+void screen_draw_all_text() {
+    screen_draw_block_text(0, 0, screen.nrows, screen.ncols);
 }
 
 void screen_draw_text(const char* text, int row, int col) {
@@ -43,7 +90,8 @@ void screen_draw_text(const char* text, int row, int col) {
 }
 
 void screen_greet() {
-	screen_draw_text("Hello world!", 0, 1);
+	screen_put_text("Hello world!", 0, 1);
+	screen_put_text("Hello world!", 20, 10);
 }
 
 // TODO you will need to swap fg bg color for the character covered by the cursor
