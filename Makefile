@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -O2
 LDLIBS = -lX11 -lm
 
-SRC = main.c screen.c
+SRC = main.c screen.c pty.c
 OBJ = $(SRC:.c=.o)
 TARGET = myTerm
 

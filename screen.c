@@ -63,7 +63,7 @@ text_t* screen_get_char(int row, int col) {
 }
 
 void screen_clear() {
-	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
+	XSetForeground(screen.display, screen.gc, BG_COLOR);
 	XFillRectangle(screen.display, screen.window, screen.gc, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
@@ -112,7 +112,7 @@ void screen_draw_text(const char* text, int row, int col) {
 	int x = col * screen.char_width;
 	// need to add extra ascent to get to the baseline position
 	int y = row * screen.char_height + screen.font->ascent;
-	XSetForeground(screen.display, screen.gc, 0x00FFFFFF);
+	XSetForeground(screen.display, screen.gc, FG_COLOR);
 	XDrawString(screen.display, screen.window, screen.gc, x, y, text, strlen(text));
 }
 
@@ -129,7 +129,7 @@ void screen_greet() {
 void screen_draw_block_cursor(int row, int col) {
 	int x = col * screen.char_width;
 	int y = row * screen.char_height;
-	XSetForeground(screen.display, screen.gc, 0x00FFFFFF);
+	XSetForeground(screen.display, screen.gc, FG_COLOR);
 	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
     screen_draw_char(row, col, 0x00000000);
 }
@@ -138,7 +138,7 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int
 	// first remove previous cursor
 	remove_cursor(cursor);
     // immediately redraw previous char
-    screen_draw_char(cursor->row, cursor->col, 0x00FFFFFF);
+    screen_draw_char(cursor->row, cursor->col, FG_COLOR);
     if (horizontal == 1) {
 		if (direction == 1) {
 			cursor->col = fmin(cursor->col + num_cols_shift, screen.ncols - 1);
@@ -158,13 +158,13 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int
 // TODO: make it true insert (e.g. shift chars to right before inserting new char)
 void insert_at_cursor(TextCursor *cursor, text_t c) {
 	screen_put_char(c, cursor->row, cursor->col);
-	screen_draw_char(cursor->row, cursor->col, 0x00000000);
+	screen_draw_char(cursor->row, cursor->col, BG_COLOR);
 }
 
 void remove_cursor(TextCursor *cursor) {
 	int x = cursor->col * screen.char_width;
 	int y = cursor->row * screen.char_height;
-	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
+	XSetForeground(screen.display, screen.gc, BG_COLOR);
 	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
 }
 
@@ -172,4 +172,41 @@ void delete_at_cursor(TextCursor *cursor) {
 	remove_cursor(cursor);
 	screen_put_char(' ', cursor->row, cursor->col);
 	screen_draw_block_cursor(cursor->row, cursor->col);
+}
+
+void screen_feed(TextCursor *cursor, const char *buf, int len) {
+	if (cursor == NULL || buf == NULL || len <= 0) {
+		return;
+	}
+	for (int i = 0; i < len; ++i) {
+		unsigned char c = (unsigned char)buf[i];
+		if (c == '\r') {
+			cursor->col = 0;
+		} else if (c == '\n') {
+			if (cursor->row < screen.nrows - 1) {
+				cursor->row += 1;
+			}
+			cursor->col = 0;
+		} else if (c == '\b') {
+			if (cursor->col > 0) {
+				cursor->col -= 1;
+				screen_put_char(' ', cursor->row, cursor->col);
+			}
+		} else if (c == '\t') {
+			int spaces = 4 - (cursor->col % 4);
+			for (int s = 0; s < spaces; ++s) {
+				if (cursor->col < screen.ncols) {
+					screen_put_char(' ', cursor->row, cursor->col);
+				}
+				if (cursor->col < screen.ncols - 1) {
+					cursor->col += 1;
+				}
+			}
+		} else if (c >= 32) {
+			screen_put_char((text_t)c, cursor->row, cursor->col);
+			if (cursor->col < screen.ncols - 1) {
+				cursor->col += 1;
+			}
+		}
+	}
 }

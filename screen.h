@@ -5,6 +5,8 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
+#define BG_COLOR 0x001e1e1e
+#define FG_COLOR 0x00FFFFFF
 
 // type for text
 typedef unsigned char text_t;
@@ -38,6 +40,7 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int
 void insert_at_cursor(TextCursor *cursor, text_t c);
 void remove_cursor(TextCursor *cursor);
 void delete_at_cursor(TextCursor *cursor);
+void screen_feed(TextCursor *cursor, const char *buf, int len);
 void screen_refresh();
 
 #endif

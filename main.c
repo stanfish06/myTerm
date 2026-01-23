@@ -1,7 +1,11 @@
+#include "pty.h"
 #include "screen.h"
 #include "scrollbar.h"
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
+#include <errno.h>
+#include <sys/select.h>
+#include <sys/types.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -25,7 +29,7 @@ void create_window() {
     // background)
     main_window =
         XCreateSimpleWindow(main_display, root_window, 0, 0, SCREEN_WIDTH,
-                            SCREEN_HEIGHT, 0, 0, 0x001e1e1e);
+                            SCREEN_HEIGHT, 0, 0, BG_COLOR);
 
     /***************
      * make cursor
@@ -71,52 +75,78 @@ int main() {
   cursor.row = 0;
   cursor.col = 0;
   cursor.visible = 1;
-  int greeted = 0;
+
+  struct winsize ws;
+  ws.ws_row = SCREEN_HEIGHT / (main_font->ascent + main_font->descent);
+  ws.ws_col = SCREEN_WIDTH / (main_font->max_bounds.width);
+  ws.ws_xpixel = SCREEN_WIDTH;
+  ws.ws_ypixel = SCREEN_HEIGHT;
+
+  int pty_fd = -1;
+  if (pty_fork(&pty_fd, &ws) < 0) {
+    fprintf(stderr, "Error: failed to start PTY\n");
+    return 1;
+  }
+
+  int xfd = ConnectionNumber(main_display);
   for (;;) {
-    XEvent e;
-    XNextEvent(main_display, &e);
-    if (!greeted) {
-      screen_greet();
-      greeted = 1;
-    }
-    screen_draw_all_text();
-    screen_draw_block_cursor(cursor.row, cursor.col);
-    if (e.type == KeyPress) {
-      char buf[32] = {0};
-      KeySym keysym;
-      int count = XLookupString(&e.xkey, buf, sizeof(buf) - 1, &keysym, NULL);
-      if (count > 0) {
-        buf[count] = '\0';
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(xfd, &rfds);
+    FD_SET(pty_fd, &rfds);
+    int maxfd = (xfd > pty_fd) ? xfd : pty_fd;
+
+    int rc = select(maxfd + 1, &rfds, NULL, NULL, NULL);
+    if (rc < 0) {
+      if (errno == EINTR) {
+        continue;
       }
-      if (count > 0) {
-        unsigned char ch = (unsigned char)buf[0];
-        if (ch >= 32 && ch < 127) {
-          insert_at_cursor(&cursor, (text_t)ch);
-          move_cursor(&cursor, 1, 0, 1, 1);
+      perror("select");
+      break;
+    }
+
+    int needs_redraw = 0;
+    if (FD_ISSET(pty_fd, &rfds)) {
+      char buf[4096];
+      int n = (int)read(pty_fd, buf, sizeof(buf));
+      if (n > 0) {
+        screen_feed(&cursor, buf, n);
+        needs_redraw = 1;
+      } else if (n == 0) {
+        break;
+      } else if (errno != EINTR && errno != EAGAIN) {
+        perror("read pty");
+        break;
+      }
+    }
+
+    if (FD_ISSET(xfd, &rfds)) {
+      while (XPending(main_display)) {
+        XEvent e;
+        XNextEvent(main_display, &e);
+        if (e.type == Expose) {
+          needs_redraw = 1;
+        } else if (e.type == KeyPress) {
+          char buf[32] = {0};
+          KeySym keysym;
+          int count = XLookupString(&e.xkey, buf, sizeof(buf), &keysym, NULL);
+          if (keysym == XK_Return) {
+            char cr = '\r';
+            write(pty_fd, &cr, 1);
+          } else if (keysym == XK_BackSpace) {
+            char bs = 0x7f;
+            write(pty_fd, &bs, 1);
+          } else if (count > 0) {
+            write(pty_fd, buf, count);
+          }
         }
       }
-      screen_draw_text("key pressed!", 1, 1);
-      printf("key %s pressed\n", buf);
-      // move cursor
-      switch (keysym) {
-      case XK_Left:
-        move_cursor(&cursor, 1, 0, -1, 1);
-        break;
-      case XK_Right:
-        move_cursor(&cursor, 1, 0, 1, 1);
-        break;
-      case XK_Up:
-        move_cursor(&cursor, 0, 1, -1, 0);
-        break;
-      case XK_Down:
-        move_cursor(&cursor, 0, 1, 1, 0);
-        break;
-      case XK_BackSpace:
-        move_cursor(&cursor, 1, 0, -1, 1);
-        delete_at_cursor(&cursor);
-      }
     }
-    printf("cursor x: %d", cursor.col);
-    XFlush(main_display);
+
+    if (needs_redraw) {
+      screen_draw_all_text();
+      screen_draw_block_cursor(cursor.row, cursor.col);
+      XFlush(main_display);
+    }
   }
 }
