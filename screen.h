@@ -36,6 +36,8 @@ void screen_draw_text(const char* text, int row, int col);
 void screen_draw_block_cursor();
 void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int direction, int horizontal);
 void insert_at_cursor(TextCursor *cursor, text_t c);
+void remove_cursor(TextCursor *cursor);
+void delete_at_cursor(TextCursor *cursor);
 void screen_refresh();
 
 #endif

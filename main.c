@@ -92,7 +92,7 @@ int main() {
         unsigned char ch = (unsigned char)buf[0];
         if (ch >= 32 && ch < 127) {
           insert_at_cursor(&cursor, (text_t)ch);
-        move_cursor(&cursor, 1, 0, 1, 1);
+          move_cursor(&cursor, 1, 0, 1, 1);
         }
       }
       screen_draw_text("key pressed!", 1, 1);
@@ -111,6 +111,9 @@ int main() {
       case XK_Down:
         move_cursor(&cursor, 0, 1, 1, 0);
         break;
+      case XK_BackSpace:
+        move_cursor(&cursor, 1, 0, -1, 1);
+        delete_at_cursor(&cursor);
       }
     }
     printf("cursor x: %d", cursor.col);

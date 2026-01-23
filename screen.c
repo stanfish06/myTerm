@@ -136,10 +136,7 @@ void screen_draw_block_cursor(int row, int col) {
 
 void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int direction, int horizontal) {
 	// first remove previous cursor
-	int x = cursor->col * screen.char_width;
-	int y = cursor->row * screen.char_height;
-	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
-	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
+	remove_cursor(cursor);
     // immediately redraw previous char
     screen_draw_char(cursor->row, cursor->col, 0x00FFFFFF);
     if (horizontal == 1) {
@@ -162,4 +159,17 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int
 void insert_at_cursor(TextCursor *cursor, text_t c) {
 	screen_put_char(c, cursor->row, cursor->col);
 	screen_draw_char(cursor->row, cursor->col, 0x00000000);
+}
+
+void remove_cursor(TextCursor *cursor) {
+	int x = cursor->col * screen.char_width;
+	int y = cursor->row * screen.char_height;
+	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
+	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
+}
+
+void delete_at_cursor(TextCursor *cursor) {
+	remove_cursor(cursor);
+	screen_put_char(' ', cursor->row, cursor->col);
+	screen_draw_block_cursor(cursor->row, cursor->col);
 }
