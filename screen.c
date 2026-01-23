@@ -31,14 +31,34 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
 }
 
 void screen_put_char(text_t c, int row, int col) {
-    int _row = fmin(row, screen.nrows - 1);
-    int _col = fmin(col, screen.ncols - 1);
+    int _row = row;
+    int _col = col;
+    if (_row < 0) {
+        _row = 0;
+    } else if (_row > screen.nrows - 1) {
+        _row = screen.nrows - 1;
+    }
+    if (_col < 0) {
+        _col = 0;
+    } else if (_col > screen.ncols - 1) {
+        _col = screen.ncols - 1;
+    }
     screen.buf_text[_row][_col] = c;   
 }
 
 text_t* screen_get_char(int row, int col) {
-    int _row = fmin(row, screen.nrows - 1);
-    int _col = fmin(col, screen.ncols - 1);
+    int _row = row;
+    int _col = col;
+    if (_row < 0) {
+        _row = 0;
+    } else if (_row > screen.nrows - 1) {
+        _row = screen.nrows - 1;
+    }
+    if (_col < 0) {
+        _col = 0;
+    } else if (_col > screen.ncols - 1) {
+        _col = screen.ncols - 1;
+    }
     return &screen.buf_text[_row][_col];
 }
 
@@ -62,14 +82,15 @@ void screen_put_text(const char* text, int row, int col) {
 void screen_draw_block_text(int row, int col, int nrows, int ncols) {
     for (int i = 0; i < nrows; ++i) {
         int _row = row + i;
-        text_t *text = calloc(ncols, sizeof(text_t));
+        text_t *text = calloc(ncols + 1, sizeof(text_t));
         for (int j = 0; j < ncols; ++j) {
             int _col = col + j;
             if (_row < screen.nrows && _col < screen.ncols) {
                 text[j] = screen.buf_text[_row][_col]; 
             }
         }
-		screen_draw_text(text, _row, col);
+        text[ncols] = '\0';
+        screen_draw_text(text, _row, col);
         free(text);
     }
 }
@@ -137,6 +158,7 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int
 	screen_draw_block_cursor(cursor->row, cursor->col);
 }
 
+// TODO: make it true insert (e.g. shift chars to right before inserting new char)
 void insert_at_cursor(TextCursor *cursor, text_t c) {
 	screen_put_char(c, cursor->row, cursor->col);
 	screen_draw_char(cursor->row, cursor->col, 0x00000000);

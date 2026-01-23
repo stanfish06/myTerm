@@ -82,13 +82,18 @@ int main() {
     screen_draw_all_text();
     screen_draw_block_cursor(cursor.row, cursor.col);
     if (e.type == KeyPress) {
-      char buf[1] = {0};
+      char buf[32] = {0};
       KeySym keysym;
-      XLookupString(&e.xkey, buf, 1, &keysym, NULL);
-      int count = XLookupString(&e.xkey, buf, 1, &keysym, NULL);
-      if (count > 0 && buf[0] > 32 && buf[0] < 127) {
-        insert_at_cursor(&cursor, keysym);
+      int count = XLookupString(&e.xkey, buf, sizeof(buf) - 1, &keysym, NULL);
+      if (count > 0) {
+        buf[count] = '\0';
+      }
+      if (count > 0) {
+        unsigned char ch = (unsigned char)buf[0];
+        if (ch >= 32 && ch < 127) {
+          insert_at_cursor(&cursor, (text_t)ch);
         move_cursor(&cursor, 1, 0, 1, 1);
+        }
       }
       screen_draw_text("key pressed!", 1, 1);
       printf("key %s pressed\n", buf);
