@@ -85,6 +85,11 @@ int main() {
       char buf[1] = {0};
       KeySym keysym;
       XLookupString(&e.xkey, buf, 1, &keysym, NULL);
+      int count = XLookupString(&e.xkey, buf, 1, &keysym, NULL);
+      if (count > 0 && buf[0] > 32 && buf[0] < 127) {
+        insert_at_cursor(&cursor, keysym);
+        move_cursor(&cursor, 1, 0, 1, 1);
+      }
       screen_draw_text("key pressed!", 1, 1);
       printf("key %s pressed\n", buf);
       // move cursor

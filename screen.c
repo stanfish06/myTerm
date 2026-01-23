@@ -36,10 +36,10 @@ void screen_put_char(text_t c, int row, int col) {
     screen.buf_text[_row][_col] = c;   
 }
 
-text_t screen_get_char(int row, int col) {
+text_t* screen_get_char(int row, int col) {
     int _row = fmin(row, screen.nrows - 1);
     int _col = fmin(col, screen.ncols - 1);
-    return screen.buf_text[_row][_col];
+    return &screen.buf_text[_row][_col];
 }
 
 void screen_clear() {
@@ -69,10 +69,7 @@ void screen_draw_block_text(int row, int col, int nrows, int ncols) {
                 text[j] = screen.buf_text[_row][_col]; 
             }
         }
-        int x = col * screen.char_width;
-        int y = _row * screen.char_height + screen.font->ascent;
-        XSetForeground(screen.display, screen.gc, 0x00FFFFFF);
-        XDrawString(screen.display, screen.window, screen.gc, x, y, text, ncols);
+		screen_draw_text(text, _row, col);
         free(text);
     }
 }
@@ -82,12 +79,12 @@ void screen_draw_all_text() {
     screen_draw_block_text(0, 0, screen.nrows, screen.ncols);
 }
 
-// draw text under cursor
+// draw char from buffer
 void screen_draw_char(int row, int col, long color) {
 	int x = col * screen.char_width;
 	int y = row * screen.char_height + screen.font->ascent;
 	XSetForeground(screen.display, screen.gc, color);
-    XDrawString(screen.display, screen.window, screen.gc, x, y, &screen.buf_text[row][col], 1);
+    XDrawString(screen.display, screen.window, screen.gc, x, y, screen_get_char(row, col), 1);
 }
 
 void screen_draw_text(const char* text, int row, int col) {
@@ -138,4 +135,9 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int
 		}
     }
 	screen_draw_block_cursor(cursor->row, cursor->col);
+}
+
+void insert_at_cursor(TextCursor *cursor, text_t c) {
+	screen_put_char(c, cursor->row, cursor->col);
+	screen_draw_char(cursor->row, cursor->col, 0x00000000);
 }
