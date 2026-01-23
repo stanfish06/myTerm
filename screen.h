@@ -3,6 +3,9 @@
 
 #include <X11/Xlib.h>
 
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 600
+
 // type for text
 typedef unsigned char text_t;
 

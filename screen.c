@@ -20,8 +20,8 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
 	screen.cursor.col = 0;
 	screen.cursor.visible = 1;
 
-    screen.nrows = 600 / screen.char_height;
-    screen.ncols = 800 / screen.char_width;
+    screen.nrows = SCREEN_HEIGHT / screen.char_height;
+    screen.ncols = SCREEN_WIDTH / screen.char_width;
 
     screen.buf_text = malloc(screen.nrows * sizeof(text_t*));
     for (int i = 0; i < screen.nrows; ++i) {
@@ -44,7 +44,7 @@ text_t screen_get_char(int row, int col) {
 
 void screen_clear() {
 	XSetForeground(screen.display, screen.gc, 0x001e1e1e);
-	XFillRectangle(screen.display, screen.window, screen.gc, 0, 0, 800, 600);
+	XFillRectangle(screen.display, screen.window, screen.gc, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 void screen_put_text(const char* text, int row, int col) {
@@ -115,8 +115,8 @@ void screen_draw_block_cursor(int row, int col) {
 	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
     screen_draw_char(row, col, 0x00000000);
 }
-// cursor moves only left or right
-void move_cursor(TextCursor *cursor, int num_cols_shift, int direction) {
+
+void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift, int direction, int horizontal) {
 	// first remove previous cursor
 	int x = cursor->col * screen.char_width;
 	int y = cursor->row * screen.char_height;
@@ -124,10 +124,18 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int direction) {
 	XFillRectangle(screen.display, screen.window, screen.gc, x, y, screen.char_width, screen.char_height);	
     // immediately redraw previous char
     screen_draw_char(cursor->row, cursor->col, 0x00FFFFFF);
-	if (direction == 1) {
-		cursor->col = fmin(cursor->col + num_cols_shift, 800 / screen.char_width);
-	} else if (direction == -1) {
-		cursor->col = fmax(cursor->col - num_cols_shift, 0);
-	}
+    if (horizontal == 1) {
+		if (direction == 1) {
+			cursor->col = fmin(cursor->col + num_cols_shift, screen.ncols - 1);
+		} else if (direction == -1) {
+			cursor->col = fmax(cursor->col - num_cols_shift, 0);
+		}
+    } else {
+		if (direction == 1) {
+			cursor->row = fmin(cursor->row + num_rows_shift, screen.nrows - 1);
+		} else if (direction == -1) {
+		    cursor->row = fmax(cursor->row - num_rows_shift, 0);
+		}
+    }
 	screen_draw_block_cursor(cursor->row, cursor->col);
 }
