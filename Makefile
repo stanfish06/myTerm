@@ -19,3 +19,6 @@ clean:
 
 format:
 	clang-format -i *.c
+
+install: all
+	cp myTerm ~/.local/bin/

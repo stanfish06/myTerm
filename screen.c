@@ -3,6 +3,7 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static TermScreen screen;
@@ -29,6 +30,17 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
   for (int i = 0; i < screen.buf_rows; ++i) {
     screen.buf_text[i] = malloc(screen.buf_cols * sizeof(text_t));
     memset(screen.buf_text[i], ' ', screen.buf_cols);
+  }
+}
+
+// for debug
+void print_screen_buf_text(int view) {
+  int nrows = screen.buf_rows;
+  if (view) {
+    nrows = screen.view_rows;
+  }
+  for (int i = 0; i < nrows; i++) {
+    printf("%s\n", screen.buf_text[i]);
   }
 }
 
@@ -184,12 +196,52 @@ void delete_at_cursor(TextCursor *cursor) {
   screen_draw_block_cursor(cursor->row, cursor->col);
 }
 
+// escape-sequence parser state;
+typedef enum {
+  ESC_NONE,
+  ESC_START,
+  ESC_CSI,
+  ESC_OSC,
+  ESC_OSC_ESC,
+} EscState;
+static EscState esc_state = ESC_NONE;
+
 void screen_feed(TextCursor *cursor, const char *buf, int len) {
   if (cursor == NULL || buf == NULL || len <= 0) {
     return;
   }
   for (int i = 0; i < len; ++i) {
     unsigned char c = (unsigned char)buf[i];
+    // consume and discard escape sequences before normal text handling
+    if (esc_state != ESC_NONE) {
+      if (esc_state == ESC_START) {
+        if (c == '[') {
+          esc_state = ESC_CSI;
+        } else if (c == ']') {
+          esc_state = ESC_OSC;
+        } else if (c < 0x20 || c > 0x2f) {
+          // intermediates (0x20-0x2f) extend the sequence, a final byte ends it
+          esc_state = ESC_NONE;
+        }
+      } else if (esc_state == ESC_CSI) {
+        if (c >= 0x40 && c <= 0x7e) {
+          esc_state = ESC_NONE;
+        }
+      } else if (esc_state == ESC_OSC) {
+        if (c == 0x07) {
+          esc_state = ESC_NONE;
+        } else if (c == 0x1b) {
+          esc_state = ESC_OSC_ESC;
+        }
+      } else if (esc_state == ESC_OSC_ESC) {
+        esc_state = ESC_NONE;
+      }
+      continue;
+    }
+    if (c == 0x1b) {
+      esc_state = ESC_START;
+      continue;
+    }
     if (c == '\r') {
       cursor->col = 0;
     } else if (c == '\n') {

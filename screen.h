@@ -46,5 +46,6 @@ void delete_at_cursor(TextCursor *cursor);
 void screen_feed(TextCursor *cursor, const char *buf, int len);
 void screen_refresh();
 int update_screen_size(TextCursor *cursor, int *out_rows, int *out_cols);
+void print_screen_buf_text(int view);
 
 #endif
