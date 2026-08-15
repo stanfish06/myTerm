@@ -1,8 +1,8 @@
 #ifndef PTY_H
 #define PTY_H
 
-#include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 
 pid_t pty_fork(int *master_fd, const struct winsize *ws);
 

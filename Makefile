@@ -16,3 +16,6 @@ $(TARGET): $(OBJ)
 
 clean:
 	rm -f $(OBJ) $(TARGET)
+
+format:
+	clang-format -i *.c

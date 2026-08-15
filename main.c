@@ -4,9 +4,9 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <errno.h>
+#include <stdio.h>
 #include <sys/select.h>
 #include <sys/types.h>
-#include <stdio.h>
 #include <unistd.h>
 
 Display *main_display = NULL;
@@ -46,8 +46,9 @@ void create_window() {
      * scroll bar
      **************/
     // TODO: need to dynamically adjust it
-    main_scrollbar.win = XCreateSimpleWindow(
-        main_display, main_window, 780, 0, 20, SCREEN_HEIGHT, 0, 0, 0x00808080);
+    /* main_scrollbar.win = XCreateSimpleWindow(
+      main_display, main_window, 780, 0, 20, SCREEN_HEIGHT, 0, 0, 0x00808080);
+    */
 
     /**************
      * text
@@ -61,7 +62,7 @@ void create_window() {
      ****************/
     // basically show the windows
     XMapWindow(main_display, main_window);
-    XMapWindow(main_display, main_scrollbar.win);
+    // XMapWindow(main_display, main_scrollbar.win);
     // flush all data now. Generally not needed after having event loop
     XFlush(main_display);
     screen_init(main_display, main_window, main_gc, main_font);
@@ -81,7 +82,6 @@ int main() {
   ws.ws_col = SCREEN_WIDTH / (main_font->max_bounds.width);
   ws.ws_xpixel = SCREEN_WIDTH;
   ws.ws_ypixel = SCREEN_HEIGHT;
-
   int pty_fd = -1;
   if (pty_fork(&pty_fd, &ws) < 0) {
     fprintf(stderr, "Error: failed to start PTY\n");
@@ -90,6 +90,7 @@ int main() {
 
   int xfd = ConnectionNumber(main_display);
   for (;;) {
+    update_screen_size();
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(xfd, &rfds);
