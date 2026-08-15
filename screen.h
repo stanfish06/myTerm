@@ -26,8 +26,10 @@ typedef struct {
   int char_height;
   TextCursor cursor;
   text_t **buf_text;
-  int nrows;
-  int ncols;
+  int buf_rows;
+  int buf_cols;
+  int view_rows;
+  int view_cols;
 } TermScreen;
 
 void screen_init(Display *display, Window window, GC gc, XFontStruct *font);
@@ -43,6 +45,6 @@ void remove_cursor(TextCursor *cursor);
 void delete_at_cursor(TextCursor *cursor);
 void screen_feed(TextCursor *cursor, const char *buf, int len);
 void screen_refresh();
-void update_screen_size();
+int update_screen_size(TextCursor *cursor, int *out_rows, int *out_cols);
 
 #endif

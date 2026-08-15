@@ -71,7 +71,8 @@ void create_window() {
 
 int main() {
   create_window();
-  XSelectInput(main_display, main_window, ExposureMask | KeyPressMask);
+  XSelectInput(main_display, main_window,
+               ExposureMask | KeyPressMask | StructureNotifyMask);
   TextCursor cursor;
   cursor.row = 0;
   cursor.col = 0;
@@ -90,7 +91,6 @@ int main() {
 
   int xfd = ConnectionNumber(main_display);
   for (;;) {
-    update_screen_size();
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(xfd, &rfds);
@@ -127,6 +127,12 @@ int main() {
         XNextEvent(main_display, &e);
         if (e.type == Expose) {
           needs_redraw = 1;
+        } else if (e.type == ConfigureNotify) {
+          int vrows, vcols;
+          if (update_screen_size(&cursor, &vrows, &vcols)) {
+            pty_set_winsize(pty_fd, vrows, vcols);
+            needs_redraw = 1;
+          }
         } else if (e.type == KeyPress) {
           char buf[32] = {0};
           KeySym keysym;

@@ -3,7 +3,6 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 static TermScreen screen;
@@ -21,13 +20,15 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
   screen.cursor.col = 0;
   screen.cursor.visible = 1;
 
-  screen.nrows = SCREEN_HEIGHT / screen.char_height * 10;
-  screen.ncols = SCREEN_WIDTH / screen.char_width * 10;
+  screen.view_rows = SCREEN_HEIGHT / screen.char_height;
+  screen.view_cols = SCREEN_WIDTH / screen.char_width;
+  screen.buf_rows = screen.view_rows;
+  screen.buf_cols = screen.view_cols;
 
-  screen.buf_text = malloc(screen.nrows * sizeof(text_t *));
-  for (int i = 0; i < screen.nrows; ++i) {
-    screen.buf_text[i] = malloc(screen.ncols * sizeof(text_t));
-    memset(screen.buf_text[i], ' ', screen.ncols);
+  screen.buf_text = malloc(screen.buf_rows * sizeof(text_t *));
+  for (int i = 0; i < screen.buf_rows; ++i) {
+    screen.buf_text[i] = malloc(screen.buf_cols * sizeof(text_t));
+    memset(screen.buf_text[i], ' ', screen.buf_cols);
   }
 }
 
@@ -36,13 +37,13 @@ void screen_put_char(text_t c, int row, int col) {
   int _col = col;
   if (_row < 0) {
     _row = 0;
-  } else if (_row > screen.nrows - 1) {
-    _row = screen.nrows - 1;
+  } else if (_row > screen.view_rows - 1) {
+    _row = screen.view_rows - 1;
   }
   if (_col < 0) {
     _col = 0;
-  } else if (_col > screen.ncols - 1) {
-    _col = screen.ncols - 1;
+  } else if (_col > screen.view_cols - 1) {
+    _col = screen.view_cols - 1;
   }
   screen.buf_text[_row][_col] = c;
 }
@@ -52,13 +53,13 @@ text_t *screen_get_char(int row, int col) {
   int _col = col;
   if (_row < 0) {
     _row = 0;
-  } else if (_row > screen.nrows - 1) {
-    _row = screen.nrows - 1;
+  } else if (_row > screen.view_rows - 1) {
+    _row = screen.view_rows - 1;
   }
   if (_col < 0) {
     _col = 0;
-  } else if (_col > screen.ncols - 1) {
-    _col = screen.ncols - 1;
+  } else if (_col > screen.view_cols - 1) {
+    _col = screen.view_cols - 1;
   }
   return &screen.buf_text[_row][_col];
 }
@@ -70,11 +71,11 @@ void screen_clear() {
 }
 
 void screen_put_text(const char *text, int row, int col) {
-  if (row < screen.nrows) {
+  if (row < screen.view_rows) {
     int text_len = strlen(text);
     for (int i = 0; i < text_len; ++i) {
       int _col = col + i;
-      if (_col < screen.ncols) {
+      if (_col < screen.view_cols) {
         screen_put_char(text[i], row, _col);
       }
     }
@@ -87,7 +88,7 @@ void screen_draw_block_text(int row, int col, int nrows, int ncols) {
     text_t *text = calloc(ncols + 1, sizeof(text_t));
     for (int j = 0; j < ncols; ++j) {
       int _col = col + j;
-      if (_row < screen.nrows && _col < screen.ncols) {
+      if (_row < screen.view_rows && _col < screen.view_cols) {
         text[j] = screen.buf_text[_row][_col];
       }
     }
@@ -99,7 +100,7 @@ void screen_draw_block_text(int row, int col, int nrows, int ncols) {
 
 // handy function to redraw full screen, for test only
 void screen_draw_all_text() {
-  screen_draw_block_text(0, 0, screen.nrows, screen.ncols);
+  screen_draw_block_text(0, 0, screen.view_rows, screen.view_cols);
 }
 
 // draw char from buffer
@@ -148,13 +149,13 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift,
   screen_draw_char(cursor->row, cursor->col, FG_COLOR);
   if (horizontal == 1) {
     if (direction == 1) {
-      cursor->col = fmin(cursor->col + num_cols_shift, screen.ncols - 1);
+      cursor->col = fmin(cursor->col + num_cols_shift, screen.view_cols - 1);
     } else if (direction == -1) {
       cursor->col = fmax(cursor->col - num_cols_shift, 0);
     }
   } else {
     if (direction == 1) {
-      cursor->row = fmin(cursor->row + num_rows_shift, screen.nrows - 1);
+      cursor->row = fmin(cursor->row + num_rows_shift, screen.view_rows - 1);
     } else if (direction == -1) {
       cursor->row = fmax(cursor->row - num_rows_shift, 0);
     }
@@ -192,7 +193,7 @@ void screen_feed(TextCursor *cursor, const char *buf, int len) {
     if (c == '\r') {
       cursor->col = 0;
     } else if (c == '\n') {
-      if (cursor->row < screen.nrows - 1) {
+      if (cursor->row < screen.view_rows - 1) {
         cursor->row += 1;
       }
       cursor->col = 0;
@@ -204,48 +205,72 @@ void screen_feed(TextCursor *cursor, const char *buf, int len) {
     } else if (c == '\t') {
       int spaces = 4 - (cursor->col % 4);
       for (int s = 0; s < spaces; ++s) {
-        if (cursor->col < screen.ncols) {
+        if (cursor->col < screen.view_cols) {
           screen_put_char(' ', cursor->row, cursor->col);
         }
-        if (cursor->col < screen.ncols - 1) {
+        if (cursor->col < screen.view_cols - 1) {
           cursor->col += 1;
         }
       }
     } else if (c >= 32) {
       screen_put_char((text_t)c, cursor->row, cursor->col);
-      if (cursor->col < screen.ncols - 1) {
+      if (cursor->col < screen.view_cols - 1) {
         cursor->col += 1;
       }
     }
   }
 }
 
-void update_screen_size() {
+int update_screen_size(TextCursor *cursor, int *out_rows, int *out_cols) {
   XWindowAttributes attrs;
-  if (XGetWindowAttributes(screen.display, screen.window, &attrs)) {
-    int nrows = attrs.height / screen.char_height;
-    int ncols = attrs.width / screen.char_width;
-    if (nrows < screen.nrows) {
-      int i_start = screen.nrows - nrows;
-      memmove(&screen.buf_text[0], &screen.buf_text[i_start],
-              nrows * screen.ncols * sizeof(text_t));
-    } else if (nrows > screen.nrows) {
-      screen.buf_text = realloc(screen.buf_text, nrows * sizeof(text_t *));
-    }
-    if (ncols > screen.ncols) {
-      for (int i = 0; i < screen.nrows; i++) {
-        screen.buf_text[i] =
-            realloc(screen.buf_text[i], ncols * sizeof(text_t));
-        memset(&screen.buf_text[i][screen.ncols], ' ', ncols - screen.ncols);
-      }
-      if (nrows > screen.nrows) {
-        for (int i = screen.nrows; i < nrows; i++) {
-          screen.buf_text[i] = malloc(ncols * sizeof(text_t));
-          memset(screen.buf_text[i], ' ', ncols);
-        }
-      }
-    }
-    screen.nrows = nrows;
-    screen.ncols = ncols;
+  if (!XGetWindowAttributes(screen.display, screen.window, &attrs)) {
+    return 0;
   }
+  int view_rows = attrs.height / screen.char_height;
+  int view_cols = attrs.width / screen.char_width;
+  if (view_rows < 1) {
+    view_rows = 1;
+  }
+  if (view_cols < 1) {
+    view_cols = 1;
+  }
+  if (view_rows == screen.view_rows && view_cols == screen.view_cols) {
+    return 0;
+  }
+
+  if (view_cols > screen.buf_cols) {
+    for (int i = 0; i < screen.buf_rows; ++i) {
+      screen.buf_text[i] =
+          realloc(screen.buf_text[i], view_cols * sizeof(text_t));
+      memset(&screen.buf_text[i][screen.buf_cols], ' ',
+             view_cols - screen.buf_cols);
+    }
+    screen.buf_cols = view_cols;
+  }
+  if (view_rows > screen.buf_rows) {
+    screen.buf_text = realloc(screen.buf_text, view_rows * sizeof(text_t *));
+    for (int i = screen.buf_rows; i < view_rows; ++i) {
+      screen.buf_text[i] = malloc(screen.buf_cols * sizeof(text_t));
+      memset(screen.buf_text[i], ' ', screen.buf_cols);
+    }
+    screen.buf_rows = view_rows;
+  }
+
+  screen.view_rows = view_rows;
+  screen.view_cols = view_cols;
+  if (cursor != NULL) {
+    if (cursor->row > view_rows - 1) {
+      cursor->row = view_rows - 1;
+    }
+    if (cursor->col > view_cols - 1) {
+      cursor->col = view_cols - 1;
+    }
+  }
+  if (out_rows != NULL) {
+    *out_rows = view_rows;
+  }
+  if (out_cols != NULL) {
+    *out_cols = view_cols;
+  }
+  return 1;
 }
