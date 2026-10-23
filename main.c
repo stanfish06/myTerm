@@ -150,7 +150,7 @@ int main() {
       }
     }
 
-    print_screen_buf_text(1);
+    // print_screen_buf_text(1);
 
     if (needs_redraw) {
       screen_draw_all_text();

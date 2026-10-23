@@ -129,8 +129,9 @@ void screen_draw_text(const char *text, int row, int col) {
   // need to add extra ascent to get to the baseline position
   int y = row * screen.char_height + screen.font->ascent;
   XSetForeground(screen.display, screen.gc, FG_COLOR);
-  XDrawString(screen.display, screen.window, screen.gc, x, y, text,
-              strlen(text));
+  XSetBackground(screen.display, screen.gc, BG_COLOR);
+  XDrawImageString(screen.display, screen.window, screen.gc, x, y, text,
+                   strlen(text));
 }
 
 void screen_greet() {
