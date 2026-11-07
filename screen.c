@@ -228,6 +228,10 @@ static EscState esc_state = ESC_NONE;
 static int wrap_next = 0;
 // cursor saved by ESC 7, restored by ESC 8
 static TextCursor saved_cursor = {0, 0, 1};
+// DECCKM (CSI ?1h/l): cursor keys send SS3 (ESC O x) instead of CSI (ESC [ x)
+static int app_cursor_keys = 0;
+
+int screen_app_cursor_keys() { return app_cursor_keys; }
 
 // blank columns [from, to) on a row
 static void erase_cells(int row, int from, int to) {
@@ -361,9 +365,19 @@ void handle_csi_escape(TextCursor *cursor) {
   int row = cursor->row;
   int col = cursor->col;
 
-  // private sequences (ESC[?25l, ESC[>c, ...) are not supported yet
-  if (csiescape.priv)
+  // private sequences: only DEC modes via ESC[?Nh / ESC[?Nl are handled
+  if (csiescape.priv) {
+    char m = csiescape.mode[0];
+    if (csiescape.priv == '?' && (m == 'h' || m == 'l')) {
+      for (int i = 0; i < csiescape.narg; i++) {
+        if (arg[i] == 1) // DECCKM
+          app_cursor_keys = (m == 'h');
+        // other DEC modes (?25 cursor visibility, ?1049 alt screen, ...) are
+        // ignored for now
+      }
+    }
     return;
+  }
   // every command except SGR cancels a pending wrap
   if (csiescape.mode[0] != 'm')
     wrap_next = 0;
