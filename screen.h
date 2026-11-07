@@ -8,6 +8,8 @@
 #define BG_COLOR 0x001e1e1e
 #define FG_COLOR 0x00FFFFFF
 
+// Macros
+#define DEFAULT(a, b) (a) = (a) ? (a) : (b);
 // type for text
 typedef unsigned char text_t;
 
@@ -30,6 +32,8 @@ typedef struct {
   int buf_cols;
   int view_rows;
   int view_cols;
+  int scroll_top; // scroll region rows, 0-based inclusive (CSI r)
+  int scroll_bot;
 } TermScreen;
 
 void screen_init(Display *display, Window window, GC gc, XFontStruct *font);
@@ -40,7 +44,6 @@ void screen_draw_text(const char *text, int row, int col);
 void screen_draw_block_cursor(int row, int col);
 void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift,
                  int direction, int horizontal);
-void insert_at_cursor(TextCursor *cursor, text_t c);
 void remove_cursor(TextCursor *cursor);
 void delete_at_cursor(TextCursor *cursor);
 void screen_feed(TextCursor *cursor, const char *buf, int len);

@@ -10,6 +10,8 @@
 #include <termios.h>
 #include <unistd.h>
 
+#define TERM_NAME "vt100"
+
 /* termios.h
 struct winsize {
   unsigned short ws_row;
@@ -92,6 +94,7 @@ pid_t pty_fork(int *master_fd, const struct winsize *ws) {
     if (shell == NULL || shell[0] == '\0') {
       shell = "/bin/bash";
     }
+    setenv("TERM", TERM_NAME, 1);
     execlp(shell, shell, (char *)NULL);
     perror("execlp");
     _exit(127);

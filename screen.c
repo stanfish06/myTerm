@@ -2,9 +2,16 @@
 #include "string.h"
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#define UTF_SIZ 4
+#define ESC_BUF_SIZ (128 * UTF_SIZ)
+#define ESC_ARG_SIZ 16
+#define ESC_ARG_MAX 65535 // cap for a single CSI parameter
+#define TAB_WIDTH 8       // fixed tab stops every N columns
 
 static TermScreen screen;
 
@@ -25,6 +32,8 @@ void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
   screen.view_cols = SCREEN_WIDTH / screen.char_width;
   screen.buf_rows = screen.view_rows;
   screen.buf_cols = screen.view_cols;
+  screen.scroll_top = 0;
+  screen.scroll_bot = screen.view_rows - 1;
 
   screen.buf_text = malloc(screen.buf_rows * sizeof(text_t *));
   for (int i = 0; i < screen.buf_rows; ++i) {
@@ -176,13 +185,6 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift,
   screen_draw_block_cursor(cursor->row, cursor->col);
 }
 
-// TODO: make it true insert (e.g. shift chars to right before inserting new
-// char)
-void insert_at_cursor(TextCursor *cursor, text_t c) {
-  screen_put_char(c, cursor->row, cursor->col);
-  screen_draw_char(cursor->row, cursor->col, BG_COLOR);
-}
-
 void remove_cursor(TextCursor *cursor) {
   int x = cursor->col * screen.char_width;
   int y = cursor->row * screen.char_height;
@@ -197,15 +199,366 @@ void delete_at_cursor(TextCursor *cursor) {
   screen_draw_block_cursor(cursor->row, cursor->col);
 }
 
-// escape-sequence parser state;
+typedef struct {
+  char buf[ESC_BUF_SIZ]; // own storage so a sequence can span pty reads
+  size_t len;
+  char priv; // private marker ('?', '>', '<', '=') or 0
+  int arg[ESC_ARG_SIZ];
+  int narg;
+  char mode[2];
+} CSIEscape;
+static CSIEscape csiescape;
+
+typedef struct {
+  char *buf;
+  size_t len;
+} STREscape;
+
 typedef enum {
   ESC_NONE,
   ESC_START,
+  ESC_INTER, // ESC + intermediate (e.g. ESC ( B), waiting for the final byte
   ESC_CSI,
   ESC_OSC,
   ESC_OSC_ESC,
 } EscState;
 static EscState esc_state = ESC_NONE;
+
+// set after printing in the last column; the next printable char wraps first
+static int wrap_next = 0;
+// cursor saved by ESC 7, restored by ESC 8
+static TextCursor saved_cursor = {0, 0, 1};
+
+// blank columns [from, to) on a row
+static void erase_cells(int row, int from, int to) {
+  if (from < 0)
+    from = 0;
+  if (to > screen.view_cols)
+    to = screen.view_cols;
+  for (int i = from; i < to; i++)
+    screen.buf_text[row][i] = ' ';
+}
+
+// move the cursor, clamped to the visible screen; cancels a pending wrap
+static void move_to(TextCursor *cursor, int row, int col) {
+  if (row < 0)
+    row = 0;
+  else if (row > screen.view_rows - 1)
+    row = screen.view_rows - 1;
+  if (col < 0)
+    col = 0;
+  else if (col > screen.view_cols - 1)
+    col = screen.view_cols - 1;
+  cursor->row = row;
+  cursor->col = col;
+  wrap_next = 0;
+}
+
+// rotate rows [top, bot] up by n; the n rows entering at bot are blanked
+static void scroll_up(int top, int bot, int n) {
+  if (n > bot - top + 1)
+    n = bot - top + 1;
+  for (int k = 0; k < n; k++) {
+    text_t *line = screen.buf_text[top];
+    memmove(&screen.buf_text[top], &screen.buf_text[top + 1],
+            (bot - top) * sizeof(text_t *));
+    screen.buf_text[bot] = line;
+    memset(line, ' ', screen.buf_cols);
+  }
+}
+
+// rotate rows [top, bot] down by n; the n rows entering at top are blanked
+static void scroll_down(int top, int bot, int n) {
+  if (n > bot - top + 1)
+    n = bot - top + 1;
+  for (int k = 0; k < n; k++) {
+    text_t *line = screen.buf_text[bot];
+    memmove(&screen.buf_text[top + 1], &screen.buf_text[top],
+            (bot - top) * sizeof(text_t *));
+    screen.buf_text[top] = line;
+    memset(line, ' ', screen.buf_cols);
+  }
+}
+
+// LF/IND: down one row, scrolling the region when on its bottom margin
+static void linefeed(TextCursor *cursor) {
+  if (cursor->row == screen.scroll_bot)
+    scroll_up(screen.scroll_top, screen.scroll_bot, 1);
+  else
+    move_to(cursor, cursor->row + 1, cursor->col);
+  wrap_next = 0;
+}
+
+// RI: up one row, scrolling the region down when on its top margin
+static void reverse_index(TextCursor *cursor) {
+  if (cursor->row == screen.scroll_top)
+    scroll_down(screen.scroll_top, screen.scroll_bot, 1);
+  else
+    move_to(cursor, cursor->row - 1, cursor->col);
+  wrap_next = 0;
+}
+
+// ICH: shift the rest of the line right by n and blank the gap
+static void insert_char_at_cursor(TextCursor *cursor, int n) {
+  int cols = screen.view_cols;
+  // clamp so dst never passes the end of the line
+  if (n > cols - cursor->col)
+    n = cols - cursor->col;
+  int src = cursor->col;
+  int dst = src + n;
+  text_t *line = screen.buf_text[cursor->row];
+  memmove(&line[dst], &line[src], (cols - dst) * sizeof(*line));
+  erase_cells(cursor->row, src, dst);
+}
+
+// DCH: shift the rest of the line left by n and blank the end
+static void delete_char_at_cursor(TextCursor *cursor, int n) {
+  int cols = screen.view_cols;
+  if (n > cols - cursor->col)
+    n = cols - cursor->col;
+  int dst = cursor->col;
+  int src = dst + n;
+  text_t *line = screen.buf_text[cursor->row];
+  memmove(&line[dst], &line[src], (cols - src) * sizeof(*line));
+  erase_cells(cursor->row, cols - n, cols);
+}
+
+void parse_csi_escape() {
+  char *p = csiescape.buf, *np;
+  long int v;
+  int sep = ';';
+  csiescape.narg = 0;
+  // 0x3c-0x3f as the first byte marks a private sequence
+  if (*p >= '<' && *p <= '?') {
+    csiescape.priv = *p;
+    p++;
+  }
+  csiescape.buf[csiescape.len] = '\0';
+  while (p < csiescape.buf + csiescape.len) {
+    np = NULL;
+    v = strtol(p, &np, 10);
+    if (np == p)
+      v = 0;
+    // clamp so handlers can add args to row/col without overflow
+    if (v < 0 || v > ESC_ARG_MAX)
+      v = ESC_ARG_MAX;
+    csiescape.arg[csiescape.narg++] = v;
+    p = np;
+    if (sep == ';' && *p == ':')
+      sep = ':';
+    if (*p != sep || csiescape.narg == ESC_ARG_SIZ)
+      break;
+    p++;
+  }
+  csiescape.mode[0] = *p++;
+  csiescape.mode[1] = (p < csiescape.buf + csiescape.len) ? *p : '\0';
+}
+
+void handle_csi_escape(TextCursor *cursor) {
+  int *arg = csiescape.arg;
+  int rows = screen.view_rows;
+  int cols = screen.view_cols;
+  int row = cursor->row;
+  int col = cursor->col;
+
+  // private sequences (ESC[?25l, ESC[>c, ...) are not supported yet
+  if (csiescape.priv)
+    return;
+  // every command except SGR cancels a pending wrap
+  if (csiescape.mode[0] != 'm')
+    wrap_next = 0;
+
+  switch (csiescape.mode[0]) {
+  case '@': // ICH: insert n blanks
+    DEFAULT(arg[0], 1);
+    insert_char_at_cursor(cursor, arg[0]);
+    break;
+  case 'A': // CUU: up n
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row - arg[0], col);
+    break;
+  case 'B': // CUD: down n
+  case 'e': // VPR
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row + arg[0], col);
+    break;
+  case 'C': // CUF: right n
+  case 'a': // HPR
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row, col + arg[0]);
+    break;
+  case 'D': // CUB: left n
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row, col - arg[0]);
+    break;
+  case 'E': // CNL: down n, column 1
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row + arg[0], 0);
+    break;
+  case 'F': // CPL: up n, column 1
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row - arg[0], 0);
+    break;
+  case 'G': // CHA: column n
+  case '`': // HPA
+    DEFAULT(arg[0], 1);
+    move_to(cursor, row, arg[0] - 1);
+    break;
+  case 'd': // VPA: row n
+    DEFAULT(arg[0], 1);
+    move_to(cursor, arg[0] - 1, col);
+    break;
+  case 'H': // CUP: row;col
+  case 'f': // HVP
+    DEFAULT(arg[0], 1);
+    DEFAULT(arg[1], 1);
+    move_to(cursor, arg[0] - 1, arg[1] - 1);
+    break;
+  case 'J': // ED: 0 cursor to end, 1 start to cursor, 2/3 whole screen
+    switch (arg[0]) {
+    case 0:
+      erase_cells(row, col, cols);
+      for (int r = row + 1; r < rows; r++)
+        erase_cells(r, 0, cols);
+      break;
+    case 1:
+      for (int r = 0; r < row; r++)
+        erase_cells(r, 0, cols);
+      erase_cells(row, 0, col + 1);
+      break;
+    case 2:
+    case 3: // 3 also clears scrollback, which myTerm doesn't have
+      for (int r = 0; r < rows; r++)
+        erase_cells(r, 0, cols);
+      break;
+    }
+    break;
+  case 'K': // EL: 0 cursor to end, 1 start to cursor, 2 whole line
+    switch (arg[0]) {
+    case 0:
+      erase_cells(row, col, cols);
+      break;
+    case 1:
+      erase_cells(row, 0, col + 1);
+      break;
+    case 2:
+      erase_cells(row, 0, cols);
+      break;
+    }
+    break;
+  case 'X': // ECH: blank n chars from the cursor, no shift
+    DEFAULT(arg[0], 1);
+    erase_cells(row, col, col + arg[0]);
+    break;
+  case 'P': // DCH: delete n chars
+    DEFAULT(arg[0], 1);
+    delete_char_at_cursor(cursor, arg[0]);
+    break;
+  case 'L': // IL: insert n lines at the cursor, only inside the scroll region
+    DEFAULT(arg[0], 1);
+    if (row >= screen.scroll_top && row <= screen.scroll_bot) {
+      scroll_down(row, screen.scroll_bot, arg[0]);
+      move_to(cursor, row, 0);
+    }
+    break;
+  case 'M': // DL: delete n lines at the cursor, only inside the scroll region
+    DEFAULT(arg[0], 1);
+    if (row >= screen.scroll_top && row <= screen.scroll_bot) {
+      scroll_up(row, screen.scroll_bot, arg[0]);
+      move_to(cursor, row, 0);
+    }
+    break;
+  case 'S': // SU: scroll region up n
+    DEFAULT(arg[0], 1);
+    scroll_up(screen.scroll_top, screen.scroll_bot, arg[0]);
+    break;
+  case 'T': // SD: scroll region down n
+    DEFAULT(arg[0], 1);
+    scroll_down(screen.scroll_top, screen.scroll_bot, arg[0]);
+    break;
+  case 'r': { // DECSTBM: scroll region top;bottom, then home the cursor
+    DEFAULT(arg[0], 1);
+    DEFAULT(arg[1], rows);
+    int top = arg[0] - 1;
+    int bot = (arg[1] > rows ? rows : arg[1]) - 1;
+    // a region needs at least two rows; otherwise ignore the request
+    if (top < bot) {
+      screen.scroll_top = top;
+      screen.scroll_bot = bot;
+      move_to(cursor, 0, 0);
+    }
+    break;
+  }
+  default: // SGR (m) and the rest: ignored until cells carry attributes
+    break;
+  }
+}
+
+// two-byte escapes: ESC <final>
+static void handle_esc(TextCursor *cursor, unsigned char c) {
+  switch (c) {
+  case 'D': // IND: line feed
+    linefeed(cursor);
+    break;
+  case 'E': // NEL: carriage return + line feed
+    move_to(cursor, cursor->row, 0);
+    linefeed(cursor);
+    break;
+  case 'M': // RI: reverse line feed
+    reverse_index(cursor);
+    break;
+  case '7': // DECSC: save cursor
+    saved_cursor = *cursor;
+    break;
+  case '8': // DECRC: restore cursor
+    move_to(cursor, saved_cursor.row, saved_cursor.col);
+    break;
+  default: // ESC =, ESC >, ... ignored
+    break;
+  }
+}
+
+// C0 controls; these run immediately, even inside an escape sequence
+static void handle_control(TextCursor *cursor, unsigned char c) {
+  switch (c) {
+  case 0x1b: // ESC (re)starts a sequence, dropping any partial one
+    esc_state = ESC_START;
+    break;
+  case 0x18: // CAN
+  case 0x1a: // SUB
+    esc_state = ESC_NONE;
+    break;
+  case '\r':
+    move_to(cursor, cursor->row, 0);
+    break;
+  case '\n':
+  case '\v':
+  case '\f':
+    linefeed(cursor);
+    break;
+  case '\b': // non-destructive: move left only
+    move_to(cursor, cursor->row, cursor->col - 1);
+    break;
+  case '\t':
+    move_to(cursor, cursor->row, (cursor->col / TAB_WIDTH + 1) * TAB_WIDTH);
+    break;
+  default: // BEL, SO/SI, DEL, ... ignored
+    break;
+  }
+}
+
+// write a char at the cursor, wrapping first if the last write hit the edge
+static void put_printable(TextCursor *cursor, text_t c) {
+  if (wrap_next) {
+    move_to(cursor, cursor->row, 0);
+    linefeed(cursor);
+  }
+  screen_put_char(c, cursor->row, cursor->col);
+  if (cursor->col < screen.view_cols - 1)
+    cursor->col += 1;
+  else
+    wrap_next = 1;
+}
 
 void screen_feed(TextCursor *cursor, const char *buf, int len) {
   if (cursor == NULL || buf == NULL || len <= 0) {
@@ -213,63 +566,58 @@ void screen_feed(TextCursor *cursor, const char *buf, int len) {
   }
   for (int i = 0; i < len; ++i) {
     unsigned char c = (unsigned char)buf[i];
-    // consume and discard escape sequences before normal text handling
-    if (esc_state != ESC_NONE) {
-      if (esc_state == ESC_START) {
-        if (c == '[') {
-          esc_state = ESC_CSI;
-        } else if (c == ']') {
-          esc_state = ESC_OSC;
-        } else if (c < 0x20 || c > 0x2f) {
-          // intermediates (0x20-0x2f) extend the sequence, a final byte ends it
-          esc_state = ESC_NONE;
-        }
-      } else if (esc_state == ESC_CSI) {
-        if (c >= 0x40 && c <= 0x7e) {
-          esc_state = ESC_NONE;
-        }
-      } else if (esc_state == ESC_OSC) {
-        if (c == 0x07) {
-          esc_state = ESC_NONE;
-        } else if (c == 0x1b) {
-          esc_state = ESC_OSC_ESC;
-        }
-      } else if (esc_state == ESC_OSC_ESC) {
+    // OSC strings swallow everything up to BEL or ESC '\'
+    if (esc_state == ESC_OSC) {
+      if (c == 0x07) {
+        esc_state = ESC_NONE;
+      } else if (c == 0x1b) {
+        esc_state = ESC_OSC_ESC;
+      }
+      continue;
+    }
+    if (esc_state == ESC_OSC_ESC) {
+      esc_state = ESC_NONE;
+      continue;
+    }
+    if (c < 0x20 || c == 0x7f) {
+      handle_control(cursor, c);
+      continue;
+    }
+    switch (esc_state) {
+    case ESC_START:
+      if (c == '[') {
+        // reset args/priv left over from the previous sequence
+        memset(&csiescape, 0, sizeof(csiescape));
+        esc_state = ESC_CSI;
+      } else if (c == ']') {
+        esc_state = ESC_OSC;
+      } else if (c >= 0x20 && c <= 0x2f) {
+        esc_state = ESC_INTER;
+      } else {
+        handle_esc(cursor, c);
         esc_state = ESC_NONE;
       }
-      continue;
-    }
-    if (c == 0x1b) {
-      esc_state = ESC_START;
-      continue;
-    }
-    if (c == '\r') {
-      cursor->col = 0;
-    } else if (c == '\n') {
-      if (cursor->row < screen.view_rows - 1) {
-        cursor->row += 1;
+      break;
+    case ESC_INTER:
+      // final byte ends it; charset selection (ESC ( B) etc. is ignored
+      if (c >= 0x30 && c <= 0x7e) {
+        esc_state = ESC_NONE;
       }
-      cursor->col = 0;
-    } else if (c == '\b') {
-      if (cursor->col > 0) {
-        cursor->col -= 1;
-        screen_put_char(' ', cursor->row, cursor->col);
+      break;
+    case ESC_CSI:
+      // accumulate params; keep one byte for the '\0' parse_csi_escape adds
+      if (csiescape.len < ESC_BUF_SIZ - 1)
+        csiescape.buf[csiescape.len++] = c;
+      // final byte: parse and dispatch once per sequence
+      if (c >= 0x40 && c <= 0x7e) {
+        parse_csi_escape();
+        handle_csi_escape(cursor);
+        esc_state = ESC_NONE;
       }
-    } else if (c == '\t') {
-      int spaces = 4 - (cursor->col % 4);
-      for (int s = 0; s < spaces; ++s) {
-        if (cursor->col < screen.view_cols) {
-          screen_put_char(' ', cursor->row, cursor->col);
-        }
-        if (cursor->col < screen.view_cols - 1) {
-          cursor->col += 1;
-        }
-      }
-    } else if (c >= 32) {
-      screen_put_char((text_t)c, cursor->row, cursor->col);
-      if (cursor->col < screen.view_cols - 1) {
-        cursor->col += 1;
-      }
+      break;
+    default:
+      put_printable(cursor, c);
+      break;
     }
   }
 }
@@ -311,6 +659,10 @@ int update_screen_size(TextCursor *cursor, int *out_rows, int *out_cols) {
 
   screen.view_rows = view_rows;
   screen.view_cols = view_cols;
+  // reset the scroll region to the full screen, as xterm does on resize
+  screen.scroll_top = 0;
+  screen.scroll_bot = view_rows - 1;
+  wrap_next = 0;
   if (cursor != NULL) {
     if (cursor->row > view_rows - 1) {
       cursor->row = view_rows - 1;
