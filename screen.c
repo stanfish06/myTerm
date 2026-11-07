@@ -15,13 +15,40 @@
 
 static TermScreen screen;
 
-void screen_init(Display *display, Window window, GC gc, XFontStruct *font) {
+// allocate an XftColor from a 0x00RRGGBB value
+static void alloc_color(unsigned long rgb, XftColor *out) {
+  int scr = DefaultScreen(screen.display);
+  // XRenderColor channels are 16-bit; 0xab -> 0xabab
+  XRenderColor c = {
+      .red = ((rgb >> 16) & 0xff) * 0x101,
+      .green = ((rgb >> 8) & 0xff) * 0x101,
+      .blue = (rgb & 0xff) * 0x101,
+      .alpha = 0xffff,
+  };
+  if (!XftColorAllocValue(screen.display, DefaultVisual(screen.display, scr),
+                          DefaultColormap(screen.display, scr), &c, out)) {
+    fprintf(stderr, "Error: cannot allocate color 0x%06lx\n", rgb);
+    exit(1);
+  }
+}
+
+void screen_init(Display *display, Window window, GC gc, XftFont *font) {
   screen.display = display;
   screen.window = window;
   screen.gc = gc;
   screen.font = font;
 
-  screen.char_width = font->max_bounds.width;
+  int scr = DefaultScreen(display);
+  screen.draw = XftDrawCreate(display, window, DefaultVisual(display, scr),
+                              DefaultColormap(display, scr));
+  alloc_color(FG_COLOR, &screen.fg);
+  alloc_color(0x000000, &screen.cursor_fg);
+
+  // cell width from one glyph's advance; max_advance_width can be wider than
+  // the real cell for fonts with a few oversized glyphs
+  XGlyphInfo ext;
+  XftTextExtents8(display, font, (const FcChar8 *)"M", 1, &ext);
+  screen.char_width = ext.xOff;
   screen.char_height = font->ascent + font->descent;
 
   screen.cursor.row = 0;
@@ -124,23 +151,27 @@ void screen_draw_all_text() {
   screen_draw_block_text(0, 0, screen.view_rows, screen.view_cols);
 }
 
-// draw char from buffer
-void screen_draw_char(int row, int col, long color) {
+// draw char from buffer; glyph only, the cell background is left as is
+void screen_draw_char(int row, int col, XftColor *color) {
   int x = col * screen.char_width;
   int y = row * screen.char_height + screen.font->ascent;
-  XSetForeground(screen.display, screen.gc, color);
-  XDrawString(screen.display, screen.window, screen.gc, x, y,
-              screen_get_char(row, col), 1);
+  XftDrawString8(screen.draw, color, screen.font, x, y,
+                 screen_get_char(row, col), 1);
 }
 
 void screen_draw_text(const char *text, int row, int col) {
   int x = col * screen.char_width;
   // need to add extra ascent to get to the baseline position
   int y = row * screen.char_height + screen.font->ascent;
-  XSetForeground(screen.display, screen.gc, FG_COLOR);
-  XSetBackground(screen.display, screen.gc, BG_COLOR);
-  XDrawImageString(screen.display, screen.window, screen.gc, x, y, text,
-                   strlen(text));
+  int len = strlen(text);
+  // Xft draws glyphs only, so clear the cells first (XDrawImageString did both)
+  XSetForeground(screen.display, screen.gc, BG_COLOR);
+  XFillRectangle(screen.display, screen.window, screen.gc, x,
+                 row * screen.char_height, len * screen.char_width,
+                 screen.char_height);
+  // bytes map to Latin-1 glyphs, same as the core font path
+  XftDrawString8(screen.draw, &screen.fg, screen.font, x, y,
+                 (const FcChar8 *)text, len);
 }
 
 void screen_greet() {
@@ -160,7 +191,7 @@ void screen_draw_block_cursor(int row, int col) {
   XSetForeground(screen.display, screen.gc, FG_COLOR);
   XFillRectangle(screen.display, screen.window, screen.gc, x, y,
                  screen.char_width, screen.char_height);
-  screen_draw_char(row, col, 0x00000000);
+  screen_draw_char(row, col, &screen.cursor_fg);
 }
 
 void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift,
@@ -168,7 +199,7 @@ void move_cursor(TextCursor *cursor, int num_cols_shift, int num_rows_shift,
   // first remove previous cursor
   remove_cursor(cursor);
   // immediately redraw previous char
-  screen_draw_char(cursor->row, cursor->col, FG_COLOR);
+  screen_draw_char(cursor->row, cursor->col, &screen.fg);
   if (horizontal == 1) {
     if (direction == 1) {
       cursor->col = fmin(cursor->col + num_cols_shift, screen.view_cols - 1);
@@ -634,6 +665,11 @@ void screen_feed(TextCursor *cursor, const char *buf, int len) {
       break;
     }
   }
+}
+
+void screen_view_size(int *rows, int *cols) {
+  *rows = screen.view_rows;
+  *cols = screen.view_cols;
 }
 
 int update_screen_size(TextCursor *cursor, int *out_rows, int *out_cols) {

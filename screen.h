@@ -1,6 +1,7 @@
 #ifndef SCREEN_H
 #define SCREEN_H
 
+#include <X11/Xft/Xft.h>
 #include <X11/Xlib.h>
 
 #define SCREEN_WIDTH 800
@@ -23,7 +24,10 @@ typedef struct {
   Display *display;
   Window window;
   GC gc;
-  XFontStruct *font;
+  XftFont *font;
+  XftDraw *draw;
+  XftColor fg;        // text color
+  XftColor cursor_fg; // text under the block cursor
   int char_width;
   int char_height;
   TextCursor cursor;
@@ -36,7 +40,8 @@ typedef struct {
   int scroll_bot;
 } TermScreen;
 
-void screen_init(Display *display, Window window, GC gc, XFontStruct *font);
+void screen_init(Display *display, Window window, GC gc, XftFont *font);
+void screen_view_size(int *rows, int *cols);
 void screen_greet();
 void screen_clear();
 void screen_draw_all_text();

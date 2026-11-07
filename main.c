@@ -1,11 +1,14 @@
+#include "config.h"
 #include "pty.h"
 #include "screen.h"
 #include "scrollbar.h"
+#include <X11/Xft/Xft.h>
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/select.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -14,7 +17,7 @@ Display *main_display = NULL;
 Window main_window = 0;
 ScrollBar main_scrollbar;
 GC main_gc = 0;
-XFontStruct *main_font = NULL;
+XftFont *main_font = NULL;
 
 void create_window() {
   main_display = XOpenDisplay(NULL);
@@ -54,9 +57,14 @@ void create_window() {
     /**************
      * text
      **************/
-    main_font = XLoadQueryFont(main_display, "fixed");
+    main_font =
+        XftFontOpenName(main_display, DefaultScreen(main_display), font);
+    if (main_font == NULL) {
+      fprintf(stderr, "Error: cannot load font '%s'\n", font);
+      exit(1);
+    }
+    // GC still fills backgrounds and the cursor block; Xft draws the glyphs
     main_gc = XCreateGC(main_display, main_window, 0, NULL);
-    XSetFont(main_display, main_gc, main_font->fid);
 
     /***************
      * display
@@ -109,8 +117,11 @@ int main() {
   cursor.visible = 1;
 
   struct winsize ws;
-  ws.ws_row = SCREEN_HEIGHT / (main_font->ascent + main_font->descent);
-  ws.ws_col = SCREEN_WIDTH / (main_font->max_bounds.width);
+  int vrows, vcols;
+  // use the grid screen_init measured so the pty and the screen agree
+  screen_view_size(&vrows, &vcols);
+  ws.ws_row = vrows;
+  ws.ws_col = vcols;
   ws.ws_xpixel = SCREEN_WIDTH;
   ws.ws_ypixel = SCREEN_HEIGHT;
   int pty_fd = -1;

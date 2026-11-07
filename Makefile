@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -O2
-LDLIBS = -lX11 -lm
+CFLAGS = -Wall -O2 $(shell pkg-config --cflags xft)
+LDLIBS = $(shell pkg-config --libs xft) -lX11 -lm
 
 SRC = main.c screen.c pty.c
 OBJ = $(SRC:.c=.o)
@@ -13,6 +13,9 @@ $(TARGET): $(OBJ)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+main.o: config.h screen.h
+screen.o: screen.h
 
 clean:
 	rm -f $(OBJ) $(TARGET)
